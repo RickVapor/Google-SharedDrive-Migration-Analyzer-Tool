@@ -34,9 +34,12 @@ def find_children(service, fileid, folder_list=[], file_list=[], cant_move_list=
         while True:
             logger("[{}] - Looking up children for ID: {}".format(timestamp, fileid))
 
-            files = service.files().list(q=" '{fileid}' in parents".format(fileid=fileid), fields="*",
-                                         supportsAllDrives='true', includeTeamDriveItems='true',
+            files = service.files().list(q=" '{fileid}' in parents".format(fileid=fileid),
+                                         fields="*",
+                                         supportsAllDrives='true',
+                                         includeTeamDriveItems='true',
                                          pageToken=page_token).execute()
+
             page_token = files.get('nextPageToken')
             files = files.get('files')
             if page_token is None:
@@ -83,6 +86,7 @@ def find_file_info(service, file_id):
     file_name = ""
     file_parent_id = ""
     file_parent_name = ""
+    file_owners = ""
 
     # This function will return the name of a file or folder based on the ID
     try:
@@ -100,7 +104,8 @@ def find_file_info(service, file_id):
         if err.resp.status == 500:
             print("g_entity={fileid}, message =  'Error 500...waiting and retrying...'".format(fileid=file_id))
             logger("g_entity={fileid}, message =  'Error 500...waiting and retrying...'".format(fileid=file_id))
-            file_name, file_parent_id, file_parent_name, file_owners = back_off(find_file_info(service, file_id.encode('utf-8')))
+            file_name, file_parent_id, file_parent_name, file_owners = back_off(find_file_info(service,
+                                                                                               file_id.encode('utf-8')))
         else:
             print(err)
             print("g_entity={fileid}, message =  'Error {errorstatus}'".format(fileid=file_id,
@@ -149,8 +154,7 @@ def create_folder_structure(service, upload_user, parent_id, parent_name, folder
     return parent_id, new_folder_list
 
 
-def set_parent(service, folder_list, item_list, currentroot, destination_id, type):
-    parentstring = ""
+def set_parent(service, folder_list, item_list, currentroot, destination_id, file_type):
     new_parent_id = None
     for item in item_list:
         try:
@@ -171,7 +175,7 @@ def set_parent(service, folder_list, item_list, currentroot, destination_id, typ
                     print("Parent ID not in list Name: {} File ID: {} Parent ID: {}".format(item_list[item]['name'],
                                                                                             item, parent_id))
 
-                if type  == 'folder':
+                if file_type == 'folder':
                     logger("[{}] - Removing parent id: {} from Drive Folder: {}".format(timestamp, parent_id,
                                                                                         item_list[item]['name']))
 
@@ -200,7 +204,7 @@ def set_parent(service, folder_list, item_list, currentroot, destination_id, typ
 
         except HttpError as err:
             if err.resp.status == 500:
-                back_off(set_parent(service, folder_list, item_list, currentroot, destination_id, type))
+                back_off(set_parent(service, folder_list, item_list, currentroot, destination_id, file_type))
             elif err.resp.status == 403:
                 print("403 Error! Folder Hierarchy too deep. Moving folders to destination root  "
                       "ID:{} Name:{} File ID: {} passing to next file.".format(destination_id,
@@ -248,13 +252,12 @@ def create_drive_folder(service, upload_user, folder_name, parent_id):
     return folder_id
 
 
-def organize_cant_moves(file_list, new_folder_list, og_folder_list, root_parent):
+def organize_cant_moves(file_list, new_folder_list):
     timestamp = datetime.now()
     timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
     cant_move_file_list = {}
 
     for item in file_list:
-        parent_id_list = []
         parent_name_list = []
         move_error = ""
 
@@ -302,7 +305,7 @@ def organize_cant_moves(file_list, new_folder_list, og_folder_list, root_parent)
     return cant_move_file_list
 
 
-def move_drive_files(file_list, new_folder_list, new_file_list={}):
+def organize_file_moves(file_list, new_folder_list, new_file_list={}):
     timestamp = datetime.now()
     timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
 
@@ -317,7 +320,6 @@ def move_drive_files(file_list, new_folder_list, new_file_list={}):
         parent_name = parent_name.get('name')
 
         new_parent = new_folder_list[og_parent_id[0]]
-
         new_parent_id = new_parent.get('id')
 
         prev_owner = item['owners'][0]
@@ -340,7 +342,7 @@ def move_drive_files(file_list, new_folder_list, new_file_list={}):
     return new_file_list
 
 
-def create_sheets(service, item_list, filename, path):
+def create_csv(item_list, filename, path):
     timestamp = datetime.now()
     timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
 
@@ -379,6 +381,8 @@ def back_off(function, t=5):
 
 
 def upload_sheet(drive_service, path, name, destination, upload_user):
+    timestamp = datetime.now()
+    timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
     file_id = ''
     try:
         file_metadata = {
@@ -390,6 +394,7 @@ def upload_sheet(drive_service, path, name, destination, upload_user):
         media = MediaFileUpload(path,
                                 mimetype='text/csv',
                                 resumable=True)
+        logger("[{}] - Uploading name:{} sheet to:{}".format(timestamp, name, destination))
 
         file = drive_service.files().create(body=file_metadata,
                                             media_body=media,
@@ -408,9 +413,12 @@ def upload_sheet(drive_service, path, name, destination, upload_user):
 
 
 def move_ownership(service, file_id, owner, perm_id, parent_id, root='false'):
+    timestamp = datetime.now()
+    timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
 
     metadata = {'role': 'owner', 'type': 'user', 'emailAddress': owner}
     try:
+        logger("[{}] - Moving ownership of logs id:{} to Owner:{}".format(timestamp, file_id, owner))
         if root == 'true':
             service.permissions().create(fileId=file_id,
                                          transferOwnership='true',
@@ -423,7 +431,6 @@ def move_ownership(service, file_id, owner, perm_id, parent_id, root='false'):
                                          sendNotificationEmail='false',
                                          body=metadata).execute()
 
-            print ("Moving to parent ID: {}".format(parent_id))
             service.files().update(fileId=file_id, addParents=parent_id)
 
         service.permissions().delete(fileId=file_id, permissionId=perm_id).execute()
@@ -438,10 +445,49 @@ def move_ownership(service, file_id, owner, perm_id, parent_id, root='false'):
     return
 
 
+def build_drive_service(folder_owner):
+    timestamp = datetime.now()
+    timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
+
+    # this will need to be changed depending on the domain of your org.
+    folder_owner = folder_owner + '@umich.edu' if '@' not in folder_owner else folder_owner
+
+    # import creds from root.
+    credentials = ServiceAccountCredentials.from_json_keyfile_name(
+        'resolute-clock-286716-225b871184f8.json', scopes=['https://www.googleapis.com/auth/drive'])
+
+    delegated_credentials = credentials.create_delegated(folder_owner)
+
+    http = Http()
+    delegated_credentials.authorize(http)
+
+    try:
+        print("Building Drive service")
+        logger("{} - Building Drive service".format(timestamp))
+        service = build('drive', 'v3', http=http)
+        print("Drive service built")
+        logger("{} - Drive service built".format(timestamp))
+
+    except HttpError as err:
+        print("error in build 1")
+        return err
+    except Exception as err:
+        if err.status == 401:
+            print("401 error!")
+            print(err)
+        return err
+
+    return service
+
+
 def main():
     global LOG_PATH
     helptext = "Future Help Text"
+    new_folder_list = {}
+    timestamp = datetime.now()
+    timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
 
+    # Spinning up parser for all that input.
     parser = argparse.ArgumentParser(
         description='Creates shared accounts in collab services',
         epilog=helptext,
@@ -477,10 +523,6 @@ def main():
         args.destination = input("Enter the folderID for the destination: ")
         args.user = input("enter the uniqname of the requester (must have at least read permission for structure): ")
 
-    new_folder_list = {}
-    timestamp = datetime.now()
-    timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
-
     # Make logging folders
     folder_path = "./logs/{}".format(timestamp)
     os.makedirs(folder_path)
@@ -490,47 +532,12 @@ def main():
     destination_id = args.destination
     folder_owner = args.user
 
-    owner_uniq = folder_owner
-    folder_owner = folder_owner + '@umich.edu' if '@' not in folder_owner else folder_owner
-
-    credentials = ServiceAccountCredentials.from_json_keyfile_name(
-        'resolute-clock-286716-225b871184f8.json', scopes=['https://www.googleapis.com/auth/drive'])
-
-    delegated_credentials = credentials.create_delegated(folder_owner)
-
-    http = Http()
-    delegated_credentials.authorize(http)
-
-    try:
-        print("building service")
-        logger("building service")
-        service = build('drive', 'v3', http=http)
-        print("service built")
-        logger("building service")
-
-        sheets_service = build('sheets', 'v4', credentials=credentials)
-        print("Building Sheets Service")
-
-    except HttpError as err:
-        print("error in build 1")
-        return err
-    except Exception as err:
-        if err.status == 401:
-            print("401 error!")
-            print(err)
-        return err
+    service = build_drive_service(folder_owner)
 
     # if all arguments are available start workflow
     if folder_parent_id and destination_id and folder_owner:
         print("Finding Children for Folder ID: {}".format(folder_parent_id))
         folder_objects, file_objects, cant_move_objects = find_children(service, folder_parent_id)
-
-        # upload user is set for any file uploads to drive.
-        try:
-            upload_user = '{user}'.format(user=folder_owner)
-        except Exception as err:
-            print("Error in get login name using default: {}".format({err}))
-            upload_user = 'admin-mgoogle@umich.edu'
 
         # parentid is dummy data and unnecessary for the first entry.
         parentname, parent_id, parent_name, parent_owners = find_file_info(service, folder_parent_id)
@@ -551,55 +558,79 @@ def main():
                                                                folder_objects, new_folder_list)
 
         print("Processing the list of files that can't be moved")
-        cant_move_file_list = organize_cant_moves(cant_move_objects, new_folder_list, folder_objects, parent_id)
+        cant_move_file_list = organize_cant_moves(cant_move_objects, new_folder_list)
 
         print("Processing files that will be moved.")
-        new_file_list = move_drive_files(file_objects, new_folder_list)
+        new_file_list = organize_file_moves(file_objects, new_folder_list)
 
         print("Creating CSVs.")
-        create_sheets(service, cant_move_file_list, "{}_unmovable".format(folder_owner), folder_path)
-        create_sheets(service, new_file_list, "{}_files_to_move".format(folder_owner), folder_path)
-        create_sheets(service, new_folder_list, "{}_folders_to_copy".format(folder_owner), folder_path)
+        create_csv(cant_move_file_list, "{}_unmovable".format(folder_owner), folder_path)
+        create_csv(new_file_list, "{}_files_to_move".format(folder_owner), folder_path)
+        create_csv(new_folder_list, "{}_folders_to_copy".format(folder_owner), folder_path)
 
         print("Setting parent attribute of sub folders.")
-        set_parent(service, new_folder_list, new_folder_list, source_root, destination_id, type="folder")
+        set_parent(service, new_folder_list, new_folder_list, source_root, destination_id, "folder")
 
         print("Moving Files.")
-        set_parent(service, new_folder_list, new_file_list, source_root, destination_id, type="files")
+        set_parent(service, new_folder_list, new_file_list, source_root, destination_id, "files")
 
         print("Link to new folder structure:  https://docs.google.com/drive/folders/{fileid}".format(
               fileid=parentfolderid))
 
+        print("Creating 'Migration Logs' folder in destination.")
         sheet_dest = create_drive_folder(service, folder_owner, "Migration Logs", parentfolderid)
-        no_move_sheet = upload_sheet(service, "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
-                                     "Unmovable Files", sheet_dest, folder_owner)
-        file_move_sheet = upload_sheet(service, "{}/{}_files_to_move.csv".format(LOG_PATH, folder_owner),
-                                       "Movable Files", sheet_dest, folder_owner)
-        folder_move_sheet = upload_sheet(service, "{}/{}_folders_to_copy.csv".format(LOG_PATH, folder_owner),
-                                         "Copied Folders", sheet_dest, folder_owner)
+        upload_sheet(service,
+                     "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
+                     "Unmovable Files",
+                     sheet_dest,
+                     folder_owner)
 
-        # upload logs to agents MyDrive.
+        print("Creating & uploading google sheets in Migration Logs within the destination location.")
+        upload_sheet(service,
+                     "{}/{}_files_to_move.csv".format(LOG_PATH, folder_owner),
+                     "Movable Files",
+                     sheet_dest,
+                     folder_owner)
+
+        upload_sheet(service,
+                     "{}/{}_folders_to_copy.csv".format(LOG_PATH, folder_owner),
+                     "Copied Folders",
+                     sheet_dest,
+                     folder_owner)
+
+        # upload logs to agents MyDrive. This will need to be changed to match domain of Workspace.
         agent_login = "{}@umich.edu".format(os.getlogin())
 
+        print("Creating 'Migration Logs' folder that will be moved to agent's MyDrive.")
         sheet_dest = create_drive_folder(service,
                                          agent_login,
                                          "{} {} Migration Logs".format(timestamp, folder_owner),
                                          'root')
 
-        no_move_sheet = upload_sheet(service, "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
-                                     "Unmovable Files", sheet_dest, agent_login)
-        a,b,c,no_move_perm = find_file_info(service, no_move_sheet)
+        print("Creating & uploading google sheets in Migration Logs that will be moved agent's to MyDrive.")
+        no_move_sheet = upload_sheet(service,
+                                     "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
+                                     "Unmovable Files",
+                                     sheet_dest,
+                                     agent_login)
 
-        file_move_sheet = upload_sheet(service, "{}/{}_files_to_move.csv".format(LOG_PATH, folder_owner),
-                                       "Movable Files", sheet_dest, agent_login)
+        file_move_sheet = upload_sheet(service,
+                                       "{}/{}_files_to_move.csv".format(LOG_PATH, folder_owner),
+                                       "Movable Files",
+                                       sheet_dest,
+                                       agent_login)
 
-        folder_move_sheet = upload_sheet(service, "{}/{}_folders_to_copy.csv".format(LOG_PATH, folder_owner),
-                                         "Copied Folders", sheet_dest, agent_login)
+        folder_move_sheet = upload_sheet(service,
+                                         "{}/{}_folders_to_copy.csv".format(LOG_PATH, folder_owner),
+                                         "Copied Folders",
+                                         sheet_dest,
+                                         agent_login)
 
         log_folder_name, log_folder_parent_id, log_folder_parent_name, log_folder_perm_id = find_file_info(service,
                                                                                                            sheet_dest)
-        # move folder
-        log_folder_perm_id = log_folder_perm_id['permissionId']
+        # move folder to agents MyDrive
+        print("Moving ownership of second set of Migration Logs to agent's Mydrive")
+        log_folder_perm_id = log_folder_perm_id.get('permissionId')
         move_ownership(service, sheet_dest, agent_login, log_folder_perm_id, 'root', 'true')
 
         # move sheets
@@ -607,7 +638,7 @@ def main():
         move_ownership(service, file_move_sheet, agent_login, log_folder_perm_id, sheet_dest)
         move_ownership(service, folder_move_sheet, agent_login, log_folder_perm_id, sheet_dest)
 
-        print (no_move_sheet)
+        print("Link to 'Migration Logs' folder: https://docs.google.com/drive/folders/{}".format(sheet_dest))
 
     else:
         print("Error, enter valid info during prompts")
