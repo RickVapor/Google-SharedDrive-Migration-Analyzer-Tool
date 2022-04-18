@@ -11,12 +11,12 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 
 v = False
+m = False
 LOG_PATH = ""
 
 
 def logger(statement):
 
-    v = False
     file_path = "{}/Execuction_logs.txt".format(LOG_PATH)
     with open(file_path, 'a') as f:
         f.write(statement + "\n")
@@ -34,11 +34,13 @@ def find_children(service, fileid, folder_list=[], file_list=[], cant_move_list=
         while True:
             logger("[{}] - Looking up children for ID: {}".format(timestamp, fileid))
 
-            files = service.files().list(q=" '{fileid}' in parents".format(fileid=fileid),
+            files = service.files().list(
+                                         q=" '{fileid}' in parents".format(fileid=fileid),
                                          fields="*",
                                          supportsAllDrives='true',
                                          includeTeamDriveItems='true',
-                                         pageToken=page_token).execute()
+                                         pageToken=page_token
+            ).execute()
 
             page_token = files.get('nextPageToken')
             files = files.get('files')
@@ -384,6 +386,12 @@ def upload_sheet(drive_service, path, name, destination, upload_user):
     timestamp = datetime.now()
     timestamp = timestamp.strftime("%Y-%m-%d %I-%M-%S")
     file_id = ''
+
+    if not m:
+        name = ('[Analysis Mode] {}'.format(name))
+    else:
+        name = ('[Move Mode] {}'.format(name))
+
     try:
         file_metadata = {
             'name': name,
@@ -481,7 +489,7 @@ def build_drive_service(folder_owner):
 
 
 def main():
-    global LOG_PATH
+    global LOG_PATH, v, m
     helptext = "Future Help Text"
     new_folder_list = {}
     timestamp = datetime.now()
@@ -510,18 +518,44 @@ def main():
         '--user',
         '-u',
         help='The uniqname of the user who owns the folder structure.'
+
     )
 
     parser.add_argument(
+        '--movefiles',
+        '-m',
+        help='The files will not be moved by default. "-m" will move the files.',
+        action='store_true'
+    )
+
+    parser.add_argument(
+        '--visual',
         '-v',
-        help='Visual toggle for more output.'
+        help='Visual toggle for more output.',
+        action='store_true',
     )
     args = parser.parse_args()
 
     if not args.source:
         args.source = input("Enter folderID for the root folder in the source structure: ")
         args.destination = input("Enter the folderID for the destination: ")
-        args.user = input("enter the uniqname of the requester (must have at least read permission for structure): ")
+        args.user = input("Enter the uniqname of the requester (must have at least read permission for structure): ")
+        args.movefiles = input("Would you like to move the files y/n: ")
+
+        if args.movefiles == 'y':
+            args.movefiles = True
+        else:
+            args.movefiles = False
+        args.visual = input("Would you like an output of all activity y/n:")
+        if args.visual == 'y':
+            args.visual = True
+        else:
+            args.visual = False
+
+    if args.movefiles:
+        m = args.movefiles
+    if args.visual:
+        v = args.visual
 
     # Make logging folders
     folder_path = "./logs/{}".format(timestamp)
@@ -540,7 +574,11 @@ def main():
         folder_objects, file_objects, cant_move_objects = find_children(service, folder_parent_id)
 
         # parentid is dummy data and unnecessary for the first entry.
-        parentname, parent_id, parent_name, parent_owners = find_file_info(service, folder_parent_id)
+        parentname, parent_id, parent_name, parent_owners = find_file_info(
+                                                                            service,
+                                                                            folder_parent_id
+        )
+
         parentfolderid = create_drive_folder(service, folder_owner, parentname, destination_id)
         print("Created new parent folder - Name: {} ID: {}".format(parent_name, parentfolderid))
 
@@ -550,12 +588,20 @@ def main():
             'id': parentfolderid,
             'parentname': parent_name,
             'type': 'folder',
-            'ogparentid': parent_id}
+            'ogparentid': parent_id
+        }
 
         # create flat folder structure
         print("Creating new folder Structure")
-        source_root, new_folder_list = create_folder_structure(service, folder_owner, parentfolderid, parentname,
-                                                               folder_objects, new_folder_list)
+
+        source_root, new_folder_list = create_folder_structure(
+                                                                service,
+                                                                folder_owner,
+                                                                parentfolderid,
+                                                                parentname,
+                                                                folder_objects,
+                                                                new_folder_list
+        )
 
         print("Processing the list of files that can't be moved")
         cant_move_file_list = organize_cant_moves(cant_move_objects, new_folder_list)
@@ -579,11 +625,14 @@ def main():
 
         print("Creating 'Migration Logs' folder in destination.")
         sheet_dest = create_drive_folder(service, folder_owner, "Migration Logs", parentfolderid)
-        upload_sheet(service,
+
+        upload_sheet(
+                     service,
                      "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
                      "Unmovable Files",
                      sheet_dest,
-                     folder_owner)
+                     folder_owner
+        )
 
         print("Creating & uploading google sheets in Migration Logs within the destination location.")
         upload_sheet(service,
@@ -608,26 +657,39 @@ def main():
                                          'root')
 
         print("Creating & uploading google sheets in Migration Logs that will be moved agent's to MyDrive.")
-        no_move_sheet = upload_sheet(service,
+
+        no_move_sheet = upload_sheet(
+                                     service,
                                      "{}/{}_unmovable.csv".format(LOG_PATH, folder_owner),
                                      "Unmovable Files",
                                      sheet_dest,
-                                     agent_login)
+                                     agent_login
+        )
 
-        file_move_sheet = upload_sheet(service,
+        file_move_sheet = upload_sheet(
+                                       service,
                                        "{}/{}_files_to_move.csv".format(LOG_PATH, folder_owner),
                                        "Movable Files",
                                        sheet_dest,
-                                       agent_login)
+                                       agent_login
+        )
 
-        folder_move_sheet = upload_sheet(service,
+        folder_move_sheet = upload_sheet(
+                                         service,
                                          "{}/{}_folders_to_copy.csv".format(LOG_PATH, folder_owner),
                                          "Copied Folders",
                                          sheet_dest,
-                                         agent_login)
+                                         agent_login
+        )
 
-        log_folder_name, log_folder_parent_id, log_folder_parent_name, log_folder_perm_id = find_file_info(service,
-                                                                                                           sheet_dest)
+        log_folder_name,\
+            log_folder_parent_id,\
+            log_folder_parent_name,\
+            log_folder_perm_id = find_file_info(
+                                                service,
+                                                sheet_dest
+            )
+
         # move folder to agents MyDrive
         print("Moving ownership of second set of Migration Logs to agent's Mydrive")
         log_folder_perm_id = log_folder_perm_id.get('permissionId')
